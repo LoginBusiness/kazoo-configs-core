@@ -23,20 +23,14 @@ fi
 
 export KAZOO_NODE="${NAME}"
 
-# Detect core count
-CORES=`grep -E "^processor" /proc/cpuinfo |wc -l`
-if [ "${CORES}" = "1" ]; then
-    BEAM=beam
-else
-    BEAM=beam.smp
-fi
+BEAM='beam beam.smp'
 
 prepare() {
     rm -f /etc/kazoo/core/vm*.args
     chown ${USER} /etc/kazoo/core
     chown -R ${USER} /opt/kazoo
-    mkdir -p /tmp/erl_pipes/${NAME}
-    chown -R ${USER} /tmp/erl_pipes/${NAME}
+    mkdir -p /tmp/erl_pipes
+    chmod a=rwx /tmp/erl_pipes 2> /dev/null
     mkdir -p /var/log/kazoo
     chown -R ${USER} /var/log/kazoo
     mkdir -p /var/run/kazoo
@@ -50,7 +44,7 @@ prepare() {
 start() {
     cd ${HOME}
 
-    if sudo -E -u ${USER} ${BIN_FILE} pid > /dev/null 2>&1; then
+    if bg_bin_cmd pid; then
         echo "Kazoo ${NAME} is already running!"
         return
     fi
@@ -72,12 +66,14 @@ start() {
 }
 
 stop() {
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            kill $i
+    if PID=$(find_beam_pid); then
+        timeout 10 /usr/sbin/sup -n "$NAME" init stop
+        RETVAL=$?
+        if [ ${RETVAL} -ne 0 ]; then
+            kill "$PID"
             RETVAL=$?
         fi
-    done
+    fi
 }
 
 restart() {
@@ -87,12 +83,10 @@ restart() {
 
 status() {
     cd ${HOME}
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            /usr/sbin/sup -n ${NAME} kz_nodes status
-            RETVAL=$?
-        fi
-    done
+    if find_beam_pid > /dev/null; then
+        /usr/sbin/sup -n "$NAME" kz_nodes status
+        RETVAL=$?
+    fi
     if [ ${RETVAL} -eq 1 ]; then
         echo "${NAME} is not running!"
     fi
@@ -100,13 +94,11 @@ status() {
 
 connect() {
     cd ${HOME}
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            set_cookie
-            sudo -E -u ${USER} ${BIN_FILE} remote_console
-            RETVAL=$?
-        fi
-    done
+    if find_beam_pid > /dev/null; then
+        set_cookie
+        fg_bin_cmd remote_console
+        RETVAL=$?
+    fi
     if [ ${RETVAL} -eq 1 ]; then
         echo "${NAME} is not running!"
     fi
@@ -114,15 +106,13 @@ connect() {
 
 attach() {
     cd ${HOME}
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            set_cookie
-            echo "WARNING: You are now directly attached to the running ${NAME} Erlang node."
-            echo "   It is safer to use: $0 connect"
-            sudo -E -u ${USER} ${BIN_FILE} attach
-            RETVAL=$?
-        fi
-    done
+    if find_beam_pid > /dev/null; then
+        set_cookie
+        echo "WARNING: You are now directly attached to the running $NAME Erlang node."
+        echo "   It is safer to use: $0 connect"
+        fg_bin_cmd attach
+        RETVAL=$?
+    fi
     if [ ${RETVAL} -eq 1 ]; then
         echo "${NAME} is not running!"
     fi
@@ -130,13 +120,11 @@ attach() {
 
 ping_node() {
     cd ${HOME}
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            set_cookie
-            sudo -E -u ${USER} ${BIN_FILE} ping
-            RETVAL=$?
-        fi
-    done
+    if find_beam_pid > /dev/null; then
+        set_cookie
+        fg_bin_cmd ping
+        RETVAL=$?
+    fi
     if [ ${RETVAL} -eq 1 ]; then
         echo "${NAME} is not running!"
     fi
@@ -144,12 +132,8 @@ ping_node() {
 
 pid() {
     cd ${HOME}
-    for i in `pidof ${BEAM}`; do
-        if cat /proc/$i/cmdline | grep -Eq "name[^\-]+${NAME}"; then
-            echo $i
-            RETVAL=0
-        fi
-    done
+    find_beam_pid
+    RETVAL=$?
     if [ ${RETVAL} -eq 1 ]; then
          echo "${NAME} is not running!"
     fi
@@ -158,6 +142,35 @@ pid() {
 set_cookie() {
     export KAZOO_COOKIE=`/usr/sbin/sup -n ${NAME} erlang get_cookie | sed "s|'||g"`
     RETVAL=$?
+}
+
+bg_bin_cmd() {
+    if [ $(whoami) != ${USER} ]; then
+        sudo -E -u ${USER} ${BIN_FILE} $@ > /dev/null 2>&1
+    else
+        ${BIN_FILE} $@ > /dev/null 2>&1
+    fi 
+    return $?
+}
+
+fg_bin_cmd() {
+    if [ $(whoami) != ${USER} ]; then
+        sudo -E -u ${USER} ${BIN_FILE} $@
+    else
+        ${BIN_FILE} $@
+    fi 
+    return $?
+}
+
+find_beam_pid() {
+    for PID in $(pidof $BEAM); do
+        if tr '\0' ' ' < /proc/"$PID"/cmdline | grep -Eq "name[^\-]+$NAME"; then
+            echo "$PID"
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 case "$1" in
