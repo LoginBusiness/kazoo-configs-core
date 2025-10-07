@@ -247,5 +247,22 @@ jobs:
             cd $BUILD_ROOT
             ./build
       -
+        run:
+          name: 'Upload RPMs to Pulp repository'
+          command: |-
+            echo "Uploading RPM packages to Pulp repository 'kazoo'"
+            for rpm in ${BUILD_RPMS}/*/*.rpm; do
+              if [ -f "$rpm" ]; then
+                echo "Uploading: $(basename $rpm)"
+                curl -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
+                  -X POST \
+                  -H "Content-Type: multipart/form-data" \
+                  -F "file=@$rpm" \
+                  -F "repository=kazoo" \
+                  "${PULP_API_URL}/pulp/api/v3/content/rpm/packages/" || echo "Failed to upload $(basename $rpm)"
+              fi
+            done
+            echo "RPM upload process completed"
+      -
         store_artifacts:
           path: /home/circleci/2600hz/packager/RPMS
