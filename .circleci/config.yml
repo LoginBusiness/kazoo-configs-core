@@ -296,41 +296,18 @@ jobs:
               if [ -f "$rpm" ]; then
                 echo "Uploading: $(basename $rpm)"
                 
-                # Step 1: Create content
+                # Step 1: Create content with repository specified
                 upload_response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
                   -X POST \
                   -F "file=@$rpm" \
+                  -F "repository=${FULL_REPO_URL}" \
                   "${PULP_API_URL_CLEAN}/content/rpm/packages/")
                 
                 upload_http_code="${upload_response: -3}"
                 upload_body="${upload_response%???}"
                 
                 if [ "$upload_http_code" -eq 200 ] || [ "$upload_http_code" -eq 201 ] || [ "$upload_http_code" -eq 202 ]; then
-                  echo "Content created successfully for $(basename $rpm) (HTTP $upload_http_code)"
-                  
-                  # Extract content href from response
-                  CONTENT_HREF=$(echo "$upload_body" | grep -o '"pulp_href":"[^"]*' | head -1 | cut -d'"' -f4)
-                  
-                  if [ -n "$CONTENT_HREF" ]; then
-                    echo "Content href: $CONTENT_HREF"
-                    
-                    # Step 2: Add content to repository
-                    add_response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
-                      -X POST \
-                      -H "Content-Type: application/json" \
-                      -d "{\"add_content_units\":[\"${PULP_API_URL_CLEAN}${CONTENT_HREF}\"]}" \
-                      "${FULL_REPO_URL}modify/")
-                    
-                    add_http_code="${add_response: -3}"
-                    if [ "$add_http_code" -eq 200 ] || [ "$add_http_code" -eq 201 ] || [ "$add_http_code" -eq 202 ]; then
-                      echo "Successfully added $(basename $rpm) to repository (HTTP $add_http_code)"
-                    else
-                      echo "Failed to add $(basename $rpm) to repository - HTTP $add_http_code"
-                      echo "Response: ${add_response%???}"
-                    fi
-                  else
-                    echo "Could not extract content href from upload response"
-                  fi
+                  echo "Successfully uploaded $(basename $rpm) to repository (HTTP $upload_http_code)"
                 else
                   echo "Failed to upload $(basename $rpm) - HTTP $upload_http_code"
                   echo "Response: $upload_body"
