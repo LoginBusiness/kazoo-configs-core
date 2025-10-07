@@ -288,19 +288,18 @@ jobs:
             fi
             
             echo "Found repository URL: $REPO_URL"
-            FULL_REPO_URL="${PULP_API_URL_CLEAN}${REPO_URL}"
-            echo "Full repository URL: $FULL_REPO_URL"
+            echo "Repository path for upload: $REPO_URL"
             
             # Upload each RPM
             for rpm in ${BUILD_RPMS}/*/*.rpm; do
               if [ -f "$rpm" ]; then
                 echo "Uploading: $(basename $rpm)"
                 
-                # Step 1: Create content with repository specified
+                # Step 1: Create content with repository specified (using just the path)
                 upload_response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
                   -X POST \
                   -F "file=@$rpm" \
-                  -F "repository=${FULL_REPO_URL}" \
+                  -F "repository=${REPO_URL}" \
                   "${PULP_API_URL_CLEAN}/content/rpm/packages/")
                 
                 upload_http_code="${upload_response: -3}"
