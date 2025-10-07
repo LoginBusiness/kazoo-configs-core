@@ -251,15 +251,47 @@ jobs:
           name: 'Upload RPMs to Pulp repository'
           command: |-
             echo "Uploading RPM packages to Pulp repository 'kazoo'"
+            
+            # Check if required environment variables are set
+            if [ -z "$PULP_API_URL" ]; then
+              echo "ERROR: PULP_API_URL environment variable is not set"
+              exit 1
+            fi
+            if [ -z "$PULP_USERNAME" ]; then
+              echo "ERROR: PULP_USERNAME environment variable is not set"
+              exit 1
+            fi
+            if [ -z "$PULP_PASSWORD" ]; then
+              echo "ERROR: PULP_PASSWORD environment variable is not set"
+              exit 1
+            fi
+            
+            echo "Using Pulp API URL: $PULP_API_URL"
+            echo "Using Pulp Username: $PULP_USERNAME"
+            
+            # Ensure PULP_API_URL doesn't end with a slash
+            PULP_API_URL_CLEAN=$(echo "$PULP_API_URL" | sed 's/\/$//')
+            
+            # Build the full endpoint URL - PULP_API_URL already includes /pulp/api/v3/
+            UPLOAD_URL="${PULP_API_URL_CLEAN}/content/rpm/packages/"
+            echo "Full upload URL: $UPLOAD_URL"
+            
             for rpm in ${BUILD_RPMS}/*/*.rpm; do
               if [ -f "$rpm" ]; then
                 echo "Uploading: $(basename $rpm)"
-                curl -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
+                response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
                   -X POST \
-                  -H "Content-Type: multipart/form-data" \
                   -F "file=@$rpm" \
                   -F "repository=kazoo" \
-                  "${PULP_API_URL}/pulp/api/v3/content/rpm/packages/" || echo "Failed to upload $(basename $rpm)"
+                  "$UPLOAD_URL")
+                
+                http_code="${response: -3}"
+                if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ] || [ "$http_code" -eq 202 ]; then
+                  echo "Successfully uploaded $(basename $rpm) (HTTP $http_code)"
+                else
+                  echo "Failed to upload $(basename $rpm) - HTTP $http_code"
+                  echo "Response: ${response%???}"
+                fi
               fi
             done
             echo "RPM upload process completed"
