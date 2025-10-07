@@ -274,25 +274,66 @@ jobs:
             # Ensure PULP_API_URL doesn't end with a slash
             PULP_API_URL_CLEAN=$(echo "$PULP_API_URL" | sed 's/\/$//')
             
-            # Build the full endpoint URL - PULP_API_URL already includes /pulp/api/v3/
-            UPLOAD_URL="${PULP_API_URL_CLEAN}/content/rpm/packages/"
-            echo "Full upload URL: $UPLOAD_URL"
+            # Get the repository URL for 'kazoo'
+            echo "Finding repository 'kazoo'..."
+            REPO_RESPONSE=$(curl -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
+              "${PULP_API_URL_CLEAN}/repositories/rpm/rpm/?name=kazoo")
             
+            REPO_URL=$(echo "$REPO_RESPONSE" | grep -o '"pulp_href":"[^"]*' | head -1 | cut -d'"' -f4)
+            
+            if [ -z "$REPO_URL" ]; then
+              echo "ERROR: Could not find repository 'kazoo' or extract repository URL"
+              echo "Repository response: $REPO_RESPONSE"
+              exit 1
+            fi
+            
+            echo "Found repository URL: $REPO_URL"
+            FULL_REPO_URL="${PULP_API_URL_CLEAN}${REPO_URL}"
+            echo "Full repository URL: $FULL_REPO_URL"
+            
+            # Upload each RPM
             for rpm in ${BUILD_RPMS}/*/*.rpm; do
               if [ -f "$rpm" ]; then
                 echo "Uploading: $(basename $rpm)"
-                response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
+                
+                # Step 1: Create content
+                upload_response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
                   -X POST \
                   -F "file=@$rpm" \
-                  -F "repository=kazoo" \
-                  "$UPLOAD_URL")
+                  "${PULP_API_URL_CLEAN}/content/rpm/packages/")
                 
-                http_code="${response: -3}"
-                if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ] || [ "$http_code" -eq 202 ]; then
-                  echo "Successfully uploaded $(basename $rpm) (HTTP $http_code)"
+                upload_http_code="${upload_response: -3}"
+                upload_body="${upload_response%???}"
+                
+                if [ "$upload_http_code" -eq 200 ] || [ "$upload_http_code" -eq 201 ] || [ "$upload_http_code" -eq 202 ]; then
+                  echo "Content created successfully for $(basename $rpm) (HTTP $upload_http_code)"
+                  
+                  # Extract content href from response
+                  CONTENT_HREF=$(echo "$upload_body" | grep -o '"pulp_href":"[^"]*' | head -1 | cut -d'"' -f4)
+                  
+                  if [ -n "$CONTENT_HREF" ]; then
+                    echo "Content href: $CONTENT_HREF"
+                    
+                    # Step 2: Add content to repository
+                    add_response=$(curl -w "%{http_code}" -s -u "${PULP_USERNAME}:${PULP_PASSWORD}" \
+                      -X POST \
+                      -H "Content-Type: application/json" \
+                      -d "{\"add_content_units\":[\"${PULP_API_URL_CLEAN}${CONTENT_HREF}\"]}" \
+                      "${FULL_REPO_URL}modify/")
+                    
+                    add_http_code="${add_response: -3}"
+                    if [ "$add_http_code" -eq 200 ] || [ "$add_http_code" -eq 201 ] || [ "$add_http_code" -eq 202 ]; then
+                      echo "Successfully added $(basename $rpm) to repository (HTTP $add_http_code)"
+                    else
+                      echo "Failed to add $(basename $rpm) to repository - HTTP $add_http_code"
+                      echo "Response: ${add_response%???}"
+                    fi
+                  else
+                    echo "Could not extract content href from upload response"
+                  fi
                 else
-                  echo "Failed to upload $(basename $rpm) - HTTP $http_code"
-                  echo "Response: ${response%???}"
+                  echo "Failed to upload $(basename $rpm) - HTTP $upload_http_code"
+                  echo "Response: $upload_body"
                 fi
               fi
             done
